@@ -77,13 +77,16 @@ pixels by the primary's scale.
 
 ## Screenshots
 
-Reproducer on a 2400x1080 @ 240dpi secondary. Text is sub-pixel-blurry
-because layout uses the wrong density:
+Red border bars hug the activity window in both cases, so the React
+Native surface itself is sized to the secondary display. The bug is what
+JS sees in the middle of the screen.
+
+Reproducer on a 2400x1080 @ 240dpi secondary:
 
 ![Reproducer on 2400x1080 @ 240dpi](screenshots/repro-secondary-2400x1080-240dpi.png)
 
-Same reproducer on a 1920x1080 @ 160dpi (1.0x) secondary. The surface
-looks fine because density 1 hides the dp/px mismatch, but
+Same reproducer on a 1920x1080 @ 160dpi (1.0x) secondary. Text renders
+small because the display is at 1.0 density, which is fine — but
 `Dimensions.get('screen').scale` still reports `3`:
 
 ![Reproducer on 1920x1080 @ 160dpi](screenshots/repro-secondary-1920x1080-160dpi.png)
