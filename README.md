@@ -97,3 +97,43 @@ notified via `DeviceInfoModule.emitUpdateDimensionsEvent()`).
 `screen.scale` now matches `window.scale`, and text renders crisply:
 
 ![Reproducer with fix POC](screenshots/repro-with-fix-poc.png)
+
+## Proof-of-concept fix (app-side workaround)
+
+`FixProofOfConceptApp/` is the same RN 0.85.3 template app, with a single
+modified file: `android/app/src/main/java/com/fixpoc/MainActivity.kt`. It
+demonstrates that the bug can be worked around entirely from app code
+without patching React Native, which both confirms the root cause is in
+RN's `DisplayMetricsHolder` and gives downstream app authors a stopgap.
+
+What it does:
+
+1. **Before `super.onCreate()`**, push activity-scoped `DisplayMetrics`
+   into `DisplayMetricsHolder` via the public `setWindowDisplayMetrics` /
+   `setScreenDisplayMetrics`. The `screen` entry is filled from the
+   activity's own `Display.getRealMetrics()` instead of the
+   `WindowManager.defaultDisplay.getRealMetrics()` that RN uses, so it
+   reflects the secondary display.
+2. **On `ReactInstanceEventListener.onReactContextInitialized`** and on
+   every `onConfigurationChanged`, re-push the metrics and call
+   `DeviceInfoModule.emitUpdateDimensionsEvent()` (via reflection — that
+   method's containing class is `internal` in Kotlin) so JS receives a
+   `change` event with the corrected values.
+
+To try it:
+
+```sh
+cd FixProofOfConceptApp
+npm install
+npm run android
+npm start    # second terminal
+
+adb shell am force-stop com.fixpoc
+adb shell am start -n com.fixpoc/.MainActivity --display 3
+```
+
+The on-screen `Dimensions.get('screen')` row will report the same `scale`
+as `window` — matching the `repro-with-fix-poc.png` screenshot above.
+
+This is a workaround, not a proper fix. The proper fix lives in React
+Native — see the "Suggested fix" section above.
