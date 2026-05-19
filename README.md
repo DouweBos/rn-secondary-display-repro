@@ -90,3 +90,10 @@ small because the display is at 1.0 density, which is fine — but
 `Dimensions.get('screen').scale` still reports `3`:
 
 ![Reproducer on 1920x1080 @ 160dpi](screenshots/repro-secondary-1920x1080-160dpi.png)
+
+Same 2400x1080 @ 240dpi secondary with the proof-of-concept fix applied
+(activity-scoped metrics pushed into `DisplayMetricsHolder` and JS
+notified via `DeviceInfoModule.emitUpdateDimensionsEvent()`).
+`screen.scale` now matches `window.scale`, and text renders crisply:
+
+![Reproducer with fix POC](screenshots/repro-with-fix-poc.png)
