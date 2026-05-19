@@ -1,55 +1,54 @@
 # RN secondary-display `Dimensions.get('screen')` bug
 
-Minimal reproducer for an Android bug in React Native where
-`Dimensions.get('screen')` (and `screenDisplayMetrics` in the native layer)
-report the **primary** display's `scale`/density even when the activity is
-running on a secondary display (Samsung DeX, external monitor, virtual
-display, or `am start --display N`).
+Android-only. When a React Native activity is running on a secondary
+display (Samsung DeX, an external monitor, a virtual display, or
+`am start --display N`), `Dimensions.get('screen')` reports the primary
+display's `scale`/density instead of the activity's actual display.
 
-The activity's own context, `Dimensions.get('window')`, and
-`useWindowDimensions()` are all reported correctly — only `screen` is wrong.
-
-## What the app shows
-
-`App.tsx` logs `Dimensions.get('window')` / `Dimensions.get('screen')` to
-`adb logcat` and renders the same values on screen. Red border bars hug the
-edges of the activity window so it's obvious when the surface is mis-sized.
+`Dimensions.get('window')` and `useWindowDimensions()` are correct. Only
+`screen` is wrong.
 
 ## How to reproduce
 
-1. Install Node + Android SDK and boot a phone-form-factor AVD (verified on
-   Pixel 9 Pro, API 36):
+Tested on a Pixel 9 Pro AVD at API 36 with a virtual secondary display
+attached.
+
+1. Boot the AVD:
 
    ```sh
    ~/Library/Android/sdk/emulator/emulator -avd Pixel_9_Pro
    ```
 
-2. Attach a virtual secondary display at a density different from the
-   primary's. On Pixel 9 Pro (3.0× primary), `240dpi` (1.5×) is enough to
-   expose the bug:
+2. Add a virtual secondary display. The Pixel 9 Pro primary is at 3.0x
+   density, so picking 240dpi (1.5x) for the secondary makes the bug
+   obvious:
 
    ```sh
    adb emu multidisplay add 1 2400 1080 240 0
    ```
 
-   A second emulator window appears for the secondary display.
+   A second emulator window opens.
 
-3. Install + start Metro + launch the app onto the secondary display:
+3. Build + install the reproducer, start Metro:
 
    ```sh
    cd ReproducerApp
    npm install
-   npm run android      # builds + installs the debug APK
-   npm start            # in a second terminal, runs Metro
+   npm run android
+   npm start    # in a second terminal
+   ```
 
+4. Force-stop the app, then start it onto the secondary display. Use the
+   display id assigned by `multidisplay add` (check
+   `adb shell dumpsys display`):
+
+   ```sh
    adb shell am force-stop com.reproducerapp
    adb shell am start -n com.reproducerapp/.MainActivity --display 3
    ```
 
-   (`--display 3` matches the id assigned by `multidisplay add` — confirm
-   with `adb shell dumpsys display`.)
-
-4. Capture the secondary display via `screencap -d <SF id>`:
+5. Look at `adb logcat | grep "\[repro\]"`, or capture the secondary
+   display:
 
    ```sh
    SF_ID=$(adb shell dumpsys SurfaceFlinger --display-id \
@@ -58,72 +57,33 @@ edges of the activity window so it's obvious when the surface is mis-sized.
    adb pull /sdcard/d.png ./repro-secondary.png
    ```
 
-   (`adb exec-out screencap` and `conductor take-screenshot` only see the
-   primary display.)
+   `screencap` without `-d` only sees the primary display.
 
 ## Expected vs actual
 
-**Expected:** `Dimensions.get('screen').scale === Dimensions.get('window').scale`
-when the activity is on a single display. Screen and window report the
-same display.
+Expected: `screen.scale === window.scale` when the activity is on a single
+display.
 
-**Actual** (Pixel 9 Pro emulator, secondary at 2400×1080 @ 240dpi):
+Actual, on the secondary at 2400x1080 @ 240dpi (1.5x):
 
 ```
-Dimensions.get('window'): { width: 1600, height: 720, scale: 1.5 }   ← correct
-Dimensions.get('screen'): { width: 800,  height: 360, scale: 3   }   ← wrong
+Dimensions.get('window'): { width: 1600, height: 720, scale: 1.5 }
+Dimensions.get('screen'): { width: 800,  height: 360, scale: 3   }
 ```
 
-`screen` is reporting the primary display's `scale=3` applied to the
-secondary's pixel dimensions, producing impossible math (800 dp × scale=3
-would be 2400 px, but at scale=3 the activity is on a 3× density display,
-which it isn't).
-
-## Root cause
-
-`ReactAndroid/.../uimanager/DisplayMetricsHolder.kt::initDisplayMetrics`:
-
-```kotlin
-val wm = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
-wm.defaultDisplay.getRealMetrics(screenDisplayMetrics)
-```
-
-`wm.defaultDisplay` returns the _device's_ default (primary) display
-regardless of which display the activity is on. Combined with the call
-sites — `ReactRootView.java` passes `getContext().getApplicationContext()`,
-and `ReactInstance.kt:251` / `ReactHostImpl.kt:727` pass a
-`BridgelessReactContext` that wraps the application context — every init
-path lands on the primary display's metrics.
-
-## Suggested fix
-
-1. In `DisplayMetricsHolder.initDisplayMetrics`, prefer the activity's
-   `Display` when the context is an `Activity` (API 30+:
-   `(context as? Activity)?.display`).
-2. In `ReactRootView`, drop `.getApplicationContext()` on the three call
-   sites and re-init in `onAttachedToWindow` so display moves after surface
-   attach also propagate.
-3. Defer Fabric's screen-metrics init until the first `ReactSurfaceView`
-   attaches, or expose a host-side API for apps to refresh metrics once an
-   activity is alive on a known display.
-
-## Real-world impact
-
-With the wrong `screen.scale`, Fabric's per-pixel computations are off,
-font rendering is sub-pixel-blurry, and any app code that uses `screen`
-metrics (commonly via `PixelRatio.get()`, which reads `screen.scale`)
-sizes content for the wrong density. Samsung DeX and external-monitor
-setups are the most affected.
+`screen.scale` is 3 (the primary display's density), and `screen.width`
+ends up at 800 because RN appears to be dividing the secondary's 2400
+pixels by the primary's scale.
 
 ## Screenshots
 
-This reproducer on the secondary display (2400×1080 @ 240dpi) — note the
-blurry text caused by Fabric laying out at the wrong density:
+Reproducer on a 2400x1080 @ 240dpi secondary. Text is sub-pixel-blurry
+because layout uses the wrong density:
 
-![Reproducer on 2400×1080 @ 240dpi](screenshots/repro-secondary-2400x1080-240dpi.png)
+![Reproducer on 2400x1080 @ 240dpi](screenshots/repro-secondary-2400x1080-240dpi.png)
 
-Same reproducer on a secondary at 1920×1080 @ 160dpi (scale=1.0). The
-surface looks fine because density 1 hides the dp/px mismatch, but the
+Same reproducer on a 1920x1080 @ 160dpi (1.0x) secondary. The surface
+looks fine because density 1 hides the dp/px mismatch, but
 `Dimensions.get('screen').scale` still reports `3`:
 
-![Reproducer on 1920×1080 @ 160dpi](screenshots/repro-secondary-1920x1080-160dpi.png)
+![Reproducer on 1920x1080 @ 160dpi](screenshots/repro-secondary-1920x1080-160dpi.png)
