@@ -109,12 +109,11 @@ path lands on the primary display's metrics.
 
 ## Real-world impact
 
-This is the root cause of broken Samsung DeX / external-monitor rendering
-in the Plex React Native client (and probably others). With the wrong
-`screen.scale`, Fabric's per-pixel computations are off, font rendering is
-sub-pixel-blurry, and any app code that uses `screen` metrics (commonly via
-`PixelRatio.get()`, which reads `screen.scale`) sizes content for the wrong
-density.
+With the wrong `screen.scale`, Fabric's per-pixel computations are off,
+font rendering is sub-pixel-blurry, and any app code that uses `screen`
+metrics (commonly via `PixelRatio.get()`, which reads `screen.scale`)
+sizes content for the wrong density. Samsung DeX and external-monitor
+setups are the most affected.
 
 ## Screenshots
 
@@ -128,16 +127,3 @@ surface looks fine because density 1 hides the dp/px mismatch, but the
 `Dimensions.get('screen').scale` still reports `3`:
 
 ![Reproducer on 1920×1080 @ 160dpi](screenshots/repro-secondary-1920x1080-160dpi.png)
-
-Real-world impact — Plex React Native client on the same emulator setup,
-without the workaround. Content is laid out as if the display were
-~600 dp wide, leaving the rest of the secondary display black:
-
-![Plex broken on secondary display](screenshots/real-world-impact-plex-broken.png)
-
-After applying the MainActivity workaround (pushing activity-scoped
-metrics into `DisplayMetricsHolder` and re-emitting via
-`DeviceInfoModule.emitUpdateDimensionsEvent()` reflectively), Plex fills
-the same secondary display correctly:
-
-![Plex with workaround on secondary display](screenshots/real-world-impact-plex-with-workaround.png)
